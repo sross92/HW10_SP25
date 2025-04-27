@@ -1,3 +1,6 @@
+#Used Dr.Smays Stem File
+#Used ChatGPT for debug and code check during replacement of missing code
+
 #region imports
 from scipy.integrate import odeint
 from scipy.optimize import minimize
@@ -99,6 +102,98 @@ class Wheel(qtw.QGraphicsItem):
 
 #endregion
 
+#region custom graphics items for schematic
+class SpringItem(qtw.QGraphicsItem):
+    def __init__(self, x1, y1, x2, y2, coils=5, amplitude=5, pen=None, parent=None):
+        super().__init__(parent)
+        self.start = qtc.QPointF(x1, y1)
+        self.end   = qtc.QPointF(x2, y2)
+        self.coils = coils
+        self.amp   = amplitude
+        self.pen   = pen or qtg.QPen(qtc.Qt.black)
+        # build a coiled path
+        path = qtg.QPainterPath(self.start)
+        dx = (self.end.x() - self.start.x()) / (2*self.coils)
+        dy = (self.end.y() - self.start.y()) / (2*self.coils)
+        for i in range(1, 2*self.coils + 1):
+            nx = self.start.x() + dx*i
+            ny = self.start.y() + dy*i
+            if i % 2:
+                # perpendicular offset
+                normal = qtc.QLineF(self.start, self.end).normalVector().unitVector().p2()
+                perp   = qtc.QPointF(normal.x()*self.amp, normal.y()*self.amp)
+                path.lineTo(nx + perp.x(), ny + perp.y())
+            else:
+                path.lineTo(nx, ny)
+        self.path = path
+
+    def boundingRect(self):
+        return self.path.boundingRect()
+
+    def paint(self, painter, option, widget=None):
+        painter.setPen(self.pen)
+        painter.drawPath(self.path)
+
+class DashpotItem(qtw.QGraphicsItem):
+    def __init__(self, x1, y1, x2, y2, width=12, pen=None, brush=None, parent=None):
+        super().__init__(parent)
+        # endpoints
+        self.start = qtc.QPointF(x1, y1)
+        self.end   = qtc.QPointF(x2, y2)
+        # overall width of the damper body
+        self.width = width
+        self.pen   = pen   or qtg.QPen(qtc.Qt.black)
+        self.brush = brush or qtg.QBrush(qtc.Qt.lightGray)
+
+        # calculate the outer body rectangle
+        top    = min(self.start.y(), self.end.y())
+        height = abs(self.end.y() - self.start.y())
+        left   = self.start.x() - self.width/2
+        self.body_rect = qtc.QRectF(left, top, self.width, height)
+
+        # calculate the inner piston housing (narrower rectangle)
+        rod_w = self.width * 0.4
+        rod_left = left + (self.width - rod_w)/2
+        self.rod_rect = qtc.QRectF(rod_left, top, rod_w, height)
+
+        # rod extension beyond the bottom
+        self.extension = 10  # pixels
+
+    def boundingRect(self):
+        # include body, rod, and extension
+        br = self.body_rect.united(self.rod_rect)
+        br = br.united(
+            qtc.QRectF(
+                self.rod_rect.center().x(),
+                self.rod_rect.bottom(),
+                0,
+                self.extension
+            )
+        )
+        return br.adjusted(-2, -2, 2, 2)
+
+    def paint(self, painter, option, widget=None):
+        # draw outer damper body
+        painter.setPen(self.pen)
+        painter.setBrush(self.brush)
+        painter.drawRect(self.body_rect)
+
+        # draw inner piston housing
+        inner_brush = qtg.QBrush(qtc.Qt.darkGray)
+        painter.setBrush(inner_brush)
+        painter.drawRect(self.rod_rect)
+
+        # draw the piston rod extension
+        rod_x = self.rod_rect.center().x()
+        rod_pen = qtg.QPen(self.pen.color(), 2)
+        painter.setPen(rod_pen)
+        painter.drawLine(
+            qtc.QPointF(rod_x, self.rod_rect.bottom()),
+            qtc.QPointF(rod_x, self.rod_rect.bottom() + self.extension)
+        )
+
+#endregion
+
 #region MVC for quarter car model
 class CarModel():
     """
@@ -124,21 +219,21 @@ class CarModel():
         self.results = None
 
         #set default values for the properties of the quarter car model
-        self.m1 = #$JES MISSING CODE# # mass of car body in kg
-        self.m2 = #$JES MISSING CODE#  # mass of wheel in kg
-        self.c1 = #$JES MISSING CODE#  # damping coefficient in N*s/m
-        self.k1 = #$JES MISSING CODE#  # spring constant of suspension in N/m
-        self.k2 = #$JES MISSING CODE#  # spring constant of tire in N/m
-        self.v = #$JES MISSING CODE#  # velocity of car in kph
+        self.m1 = 450.0    # mass of car body in kg
+        self.m2 = 20.0     # mass of wheel in kg
+        self.c1 = 4500.0   # damping coefficient in N*s/m
+        self.k1 = 15000.0  # spring constant of suspension in N/m
+        self.k2 = 90000.0  # spring constant of tire in N/m
+        self.v  = 120.0    # velocity of car in kph
 
-
-        self.mink1 = #$JES MISSING CODE#  #If I jack up my car and release the load on the spring, it extends about 3 inches
-        self.maxk1 = #$JES MISSING CODE#  #What would be a good value for a soft spring vs. a stiff spring?
-        self.mink2 = #$JES MISSING CODE#  #Same question for the shock absorber.
-        self.maxk2 = #$JES MISSING CODE#
+        self.mink1 = self.m1 * 9.81 / 0.1524  #If I jack up my car and release the load on the spring, it extends about 3 inches
+        self.maxk1 = self.m1 * 9.81 / 0.0762 #What would be a good value for a soft spring vs. a stiff spring?
+        total_mass = self.m1 + self.m2
+        self.mink2 = total_mass * 9.81 / 0.0381  #Same question for the shock absorber.
+        self.maxk2 = total_mass * 9.81 / 0.01905
         self.accel =None
-        self.accelMax = #$JES MISSING CODE#
-        self.accelLim = #$JES MISSING CODE#
+        self.accelMax = 0.0
+        self.accelLim = 2.0
         self.SSE = 0.0
 
 class CarView():
@@ -177,20 +272,64 @@ class CarView():
         self.doPlot(model)
 
     def buildScene(self):
-        #create a scene object
+        # create the scene
         self.scene = qtw.QGraphicsScene()
-        self.scene.setObjectName("MyScene")
-        self.scene.setSceneRect(-200, -200, 400, 400)  # xLeft, yTop, Width, Height
-
-        #set the scene for the graphics view object
+        self.scene.setSceneRect(-200, -200, 400, 400)
         self.gv_Schematic.setScene(self.scene)
-        #make some pens and brushes for my drawing
+
+        # pens & brushes
         self.setupPensAndBrushes()
-        self.Wheel = Wheel(0,50,50, pen=self.penWheel, wheelBrush=self.brushWheel, massBrush=self.brushMass, name = "Wheel")
-        self.CarBody = MassBlock(0, -70, 100, 30, pen=self.penWheel, brush=self.brushMass, name="Car Body", mass=150)
+
+        # add wheel and body
+        # note: Wheel constructor (CenterX, CenterY, radius)
+        self.Wheel = Wheel(0, 50, 50, pen=self.penWheel, wheelBrush=self.brushWheel, massBrush=self.brushMass)
+        self.CarBody = MassBlock(0, -70, 100, 30, pen=self.penWheel, brush=self.brushMass, name="Car Body",
+                                 mass=150)
         self.Wheel.addToScene(self.scene)
         self.scene.addItem(self.CarBody)
-        ##$JES MISSING CODE# #Finish building the scene to look similar to the schematic on the problem assignment
+
+        # figure‐out key Y positions
+        wheel_top_y = self.Wheel.y - self.Wheel.radius  # 50 - 50 =   0
+        wheel_bottom_y = self.Wheel.y + self.Wheel.radius  # 50 + 50 = 100
+        body_bottom_y = self.CarBody.y + self.CarBody.height / 2  # -70 + 15 = -55
+        road_y = wheel_bottom_y + 20  # 120
+
+        # 1) suspension spring k1 between body bottom and wheel top
+        spring1 = SpringItem(
+            0, body_bottom_y,
+            0, wheel_top_y,
+            coils=8,
+            amplitude=7,
+            pen=self.penWheel
+        )
+        self.scene.addItem(spring1)
+
+        # 2) dashpot c1 (simple rectangle) just to the right of the spring
+        dash1 = DashpotItem(
+            12, body_bottom_y,
+            12, wheel_top_y,
+            width=10,
+            pen=self.penWheel,
+            brush=self.brushMass
+        )
+        self.scene.addItem(dash1)
+
+        # 3) tire spring k2 between wheel bottom and road
+        spring2 = SpringItem(
+            0, wheel_bottom_y,
+            0, road_y,
+            coils=6,
+            amplitude=5,
+            pen=self.penWheel
+        )
+        self.scene.addItem(spring2)
+
+        # 4) thick black road line
+        roadPen = qtg.QPen(qtc.Qt.black)
+        roadPen.setWidth(3)
+        roadLine = qtw.QGraphicsLineItem(-200, road_y, 200, road_y)
+        roadLine.setPen(roadPen)
+        self.scene.addItem(roadLine)
 
     def setupPensAndBrushes(self):
         self.penWheel = qtg.QPen(qtg.QColor("orange"))
@@ -211,10 +350,10 @@ class CarView():
             QTPlotting = False  # actually, we are just using CLI and showing the plot
         ax.clear()
         ax1.clear()
-        t=model.timeData
+        t=model.t
         ycar = model.results[:,0]
         ywheel=model.results[:,2]
-        accel=model.accelData
+        accel=model.accel
 
         if self.chk_LogX.isChecked():
             ax.set_xlim(0.001,model.tmax)
@@ -283,17 +422,23 @@ class CarController():
         else:
             y = self.model.ymag
 
-        x1 = #$JES MISSING CODE#  # car position in vertical direction
-        x1dot = #$JES MISSING CODE#  # car velocity  in vertical direction
-        x2 = #$JES MISSING CODE#  # wheel position in vertical direction
-        x2dot = #$JES MISSING CODE#  # wheel velocity in vertical direction
+        x1    = X[0]  # car position in vertical direction
+        x1dot = X[1]  # car velocity in vertical direction
+        x2    = X[2]  # wheel position in vertical direction
+        x2dot = X[3]  # wheel velocity in vertical direction
 
         # write the non-trivial equations in vertical direction
-        x1ddot = #$JES MISSING CODE#)
-        x2ddot = #$JES MISSING CODE#
+        # suspension force (spring + damper)
+        Fs = self.model.c1*(x1dot - x2dot) + self.model.k1*(x1 - x2)
+        # tire spring force
+        Ft = self.model.k2*(x2 - y)
+
+        x1ddot = -Fs / self.model.m1
+        x2ddot =  (Fs - Ft) / self.model.m2
 
         # return the derivatives of the input state vector
         return [x1dot, x1ddot, x2dot, x2ddot]
+
 
     def calculate(self, doCalc=True):
         """
@@ -301,18 +446,18 @@ class CarController():
         in another function doCalc.
         """
         #Step 1.  Read from the widgets
-        self.model.m1 = #$JES MISSING CODE#
-        self.model.m2 = #$JES MISSING CODE#
-        self.model.c1 = #$JES MISSING CODE#
-        self.model.k1 = #$JES MISSING CODE#
-        self.model.k2 = #$JES MISSING CODE#
-        self.model.v = #$JES MISSING CODE#
+        self.model.m1  = float(self.le_m1.text())
+        self.model.m2  = float(self.le_m2.text())
+        self.model.c1  = float(self.le_c1.text())
+        self.model.k1  = float(self.le_k1.text())
+        self.model.k2  = float(self.le_k2.text())
+        self.model.v   = float(self.le_v.text())
 
         #recalculate min and max k values
-        self.mink1=#$JES MISSING CODE#
-        self.maxk1=#$JES MISSING CODE#
-        self.mink2=#$JES MISSING CODE#
-        self.maxk2=#$JES MISSING CODE#
+        self.mink1     = self.model.m1 * 9.81 / 0.1524
+        self.maxk1     = self.model.m1 * 9.81 / 0.0762
+        self.mink2     = (self.model.m1 + self.model.m2) * 9.81 / 0.0381
+        self.maxk2     = (self.model.m1 + self.model.m2) * 9.81 / 0.01905
 
         ymag=6.0/(12.0*3.3)   #This is the height of the ramp in m
         if ymag is not None:
@@ -375,14 +520,18 @@ class CarController():
         :return:
         """
         #Step 1:
-        #$JES MISSING CODE HERE$
+
         self.calculate(doCalc=False)
         #Step 2:
-        #JES MISSING CODE HERE$
-        x0= # create a numpy array with initial values for k1, c1, and k2
+
+        x0= np.array([self.model.k1, self.model.c1, self.model.k2])
         #Step 3:
-        #JES MISSING CODE HERE$
-        answer= #use the Nelder-Mead method to minimize the SSE function (our objective function)
+
+        answer= minimize(self.SSE, x0, method='Nelder-Mead')
+        # unpack the optimized parameters
+        self.model.k1, self.model.c1, self.model.k2 = answer.x
+        # update SSE (no penalties) and refresh the view
+        self.SSE((self.model.k1, self.model.c1, self.model.k2), optimizing=False)
         self.view.updateView(self.model)
 
     def SSE(self, vals, optimizing=True):
